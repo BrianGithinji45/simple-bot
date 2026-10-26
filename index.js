@@ -11,8 +11,8 @@ let latestQR = null
 let messageStore = new Map()
 
 // YOUR TIMING
-const DELAY_BEFORE_TYPING = 8000 // wait 8 sec after receiving
-const TYPING_DURATION = 10000 // typing for 10 sec
+const DELAY_BEFORE_TYPING = 3000 // wait 8 sec after receiving
+const TYPING_DURATION = 15000 // typing for 10 sec
 
 // ===== WEB SERVER FOR QR =====
 app.get("/", async (req, res) => {

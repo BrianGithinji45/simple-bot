@@ -1,0 +1,14 @@
+{
+  "name": "whatsapp-antibot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.8",
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
+    "pino": "^8.19.0"
+  }
+}

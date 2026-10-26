@@ -6,87 +6,53 @@ const pino = require("pino")
 const fs = require("fs")
 
 const app = express()
-const PORT = process.env.PORT || 3000
 let latestQR = null
 let messageStore = new Map()
+const AUTH_FOLDER = process.env.AUTH_FOLDER || 'auth_info_baileys'
+const PORT = process.env.PORT || 3000
 
-// YOUR TIMING
-const DELAY_BEFORE_TYPING = 3000 // wait 8 sec after receiving
-const TYPING_DURATION = 15000 // typing for 10 sec
+const DELAY_BEFORE_TYPING = 2000
+const TYPING_DURATION = 15000
 
-// ===== WEB SERVER FOR QR =====
 app.get("/", async (req, res) => {
-    if (!latestQR) {
-        return res.send(`
-        <html><body style="background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;text-align:center">
-        <h1>✅ Bot Deployed & Always Online Active</h1>
-        <p>Anti-Delete | Anti ViewOnce | Fake Typing 8s + 10s</p>
-        <p style="margin-top:20px;color:#888">If you unlinked your phone, click reset below</p>
-        <a href="/reset" style="margin-top:15px;padding:12px 20px;background:red;color:white;border-radius:10px;text-decoration:none;font-weight:bold">RESET BOT & GET NEW QR</a>
-        <p style="margin-top:20px;font-size:12px;color:#555">Even if phone is OFF, bot stays online</p>
-        </body></html>`)
-    }
-    if (latestQR === "RESET_DONE") {
-        return res.send(`<h1>Resetting... wait 10 sec and refresh</h1>`)
-    }
-    try {
-        const qrImage = await QRCode.toDataURL(latestQR)
-        res.send(`
-        <html><body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#111;color:white;text-align:center">
-            <h2>Scan This QR to Link</h2>
-            <p>WhatsApp > Settings > Linked Devices > Link a Device</p>
-            <img src="${qrImage}" style="width:320px;border:12px solid white;border-radius:20px"/>
-            <p style="margin-top:15px;color:#0f0">QR expires in 30 sec - refresh page for new QR</p>
-            <a href="/reset" style="margin-top:20px;color:red">Reset if QR not working</a>
-        </body></html>`)
-    } catch (e) { res.send("Error QR") }
+    if (!latestQR) return res.send(`<h1>✅ LIVE ALWAYS ONLINE - Pinging every 5 sec</h1><a href="/session">SESSION</a> | <a href="/reset">RESET</a>`)
+    if (latestQR === "RESET_DONE") return res.send(`<h1>Resetting...</h1>`)
+    const qrImage = await QRCode.toDataURL(latestQR)
+    res.send(`<body style="background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh"><h2>Scan - Live Always Online Bot</h2><img src="${qrImage}" style="width:320px;border:10px solid #fff;border-radius:20px"/></body>`)
 })
-
-// RESET ROUTE - FIXES YOUR CURRENT ISSUE
+app.get("/ping", (req, res) => res.send("ALIVE - bot is live pinging every 5 sec"))
+app.get("/session", (req, res) => {
+    try {
+        const b64 = Buffer.from(fs.readFileSync(`${AUTH_FOLDER}/creds.json`)).toString('base64')
+        res.send(`<p style="word-break:break-all;background:#111;color:#fff;padding:20px">${b64}</p>`)
+    } catch { res.send("No session - scan QR from /") }
+})
 app.get("/reset", (req, res) => {
-    try {
-        if (fs.existsSync('auth_info_baileys')) {
-            fs.rmSync('auth_info_baileys', { recursive: true, force: true })
-        }
-        latestQR = "RESET_DONE"
-        res.send(`
-        <html><body style="background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif">
-        <h1>✅ Reset Done</h1>
-        <p>Now do this:</p>
-        <p>1. Go to Render > Environment > DELETE SESSION_ID</p>
-        <p>2. Go to Manual Deploy > Deploy latest commit</p>
-        <p>3. Come back to / to scan new QR</p>
-        </body></html>`)
-        setTimeout(() => {
-            console.log("Resetting bot...")
-            process.exit(0)
-        }, 3000)
-    } catch (e) {
-        res.send("Reset error: " + e.message)
-    }
+    if (fs.existsSync(AUTH_FOLDER)) fs.rmSync(AUTH_FOLDER, { recursive: true, force: true })
+    latestQR = "RESET_DONE"
+    res.send("Reset done - delete SESSION_ID in Render Env and redeploy")
+    setTimeout(() => process.exit(0), 2000)
 })
+app.listen(PORT, () => console.log("Web up on " + PORT))
 
-app.listen(PORT, () => console.log(`Web running on ${PORT}`))
-
-// KEEP RENDER AWAKE FOR ALWAYS ONLINE
-setInterval(() => {
-    if (process.env.RENDER_EXTERNAL_URL) {
-        fetch(process.env.RENDER_EXTERNAL_URL).catch(()=>{})
-    }
-}, 20000)
-
-// RESTORE SESSION FROM ENV (NO DISK)
+// RESTORE SESSION
 if (process.env.SESSION_ID) {
-    try {
-        if (!fs.existsSync('auth_info_baileys')) fs.mkdirSync('auth_info_baileys')
-        const creds = Buffer.from(process.env.SESSION_ID, 'base64').toString()
-        fs.writeFileSync('auth_info_baileys/creds.json', creds)
-        console.log("Session restored from ENV")
-    } catch (e) { console.log("Failed to restore session", e.message) }
+    if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true })
+    fs.writeFileSync(`${AUTH_FOLDER}/creds.json`, Buffer.from(process.env.SESSION_ID, 'base64').toString())
 }
 
+// RENDER FREE KEEP ALIVE - PING EVERY 5 SECONDS
+setInterval(() => {
+    const url = process.env.RENDER_EXTERNAL_URL
+    if (url) {
+        fetch(url + "/ping").then(()=>console.log("Self ping 5s")).catch(()=>{})
+        fetch(url).catch(()=>{})
+    }
+    console.log("Ping loop 5 sec")
+}, 5000)
+
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys')
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER)
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
@@ -94,83 +60,61 @@ async function startBot() {
         markOnlineOnConnect: true,
     })
 
-    const keepOnline = () => sock.sendPresenceUpdate('available').catch(()=>{})
+    // WHATSAPP ALWAYS ONLINE - PING EVERY 5 SECONDS
+    const stayOnline = async () => {
+        try {
+            await sock.sendPresenceUpdate('available')
+            console.log("WhatsApp: set to AVAILABLE (online) - 5s ping")
+        } catch {}
+    }
 
     sock.ev.on('creds.update', saveCreds)
-
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update
-        if (qr) {
-            latestQR = qr
-            console.log("New QR - open Render URL to scan")
-        }
-        if (connection === 'open') {
+    sock.ev.on('connection.update', (u) => {
+        if (u.qr) latestQR = u.qr
+        if (u.connection === 'open') {
             latestQR = null
-            console.log("PAIRED ✅ Always Online Active")
-            setInterval(keepOnline, 5000) // always online every 5 sec
-            keepOnline()
-
-            // SHOW SESSION_ID TO SAVE (FOR ALWAYS ONLINE WITHOUT DISK)
-            try {
-                if (!process.env.SESSION_ID) {
-                    const creds = fs.readFileSync('auth_info_baileys/creds.json')
-                    const b64 = Buffer.from(creds).toString('base64')
-                    console.log("\n\n--- COPY SESSION_ID ---\n" + b64 + "\n--- END SESSION_ID ---\n\n")
-                }
-            } catch {}
+            console.log("PAIRED ✅ LIVE NOW - pinging WhatsApp every 5 sec")
+            stayOnline()
+            setInterval(stayOnline, 5000) // WHATSAPP PING EVERY 5 SEC
         }
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error instanceof Boom) ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut : true
+        if (u.connection === 'close') {
+            const shouldReconnect = (u.lastDisconnect?.error instanceof Boom) ? u.lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut : true
             if (shouldReconnect) startBot()
-            else {
-                console.log("Logged out - need /reset")
-                latestQR = null
-            }
         }
     })
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
-            if (!msg.message || msg.key.fromMe) continue
-            const jid = msg.key.remoteJid
-            messageStore.set(msg.key.id, msg)
+            if (!msg.message) continue
+            const protocol = msg.message.protocolMessage
+            if (protocol && protocol.type === 0) {
+                const deletedKey = protocol.key
+                if (messageStore.has(deletedKey.id)) {
+                    const oldMsg = messageStore.get(deletedKey.id)
+                    const content = oldMsg.message?.conversation || oldMsg.message?.extendedTextMessage?.text || "media"
+                    await sock.sendMessage(oldMsg.key.remoteJid, { text: `*Anti-Delete 🚫* ${content}` })
+                }
+                continue
+            }
+            if (!msg.key.fromMe) messageStore.set(msg.key.id, msg)
 
-            // ANTI VIEW ONCE
             try {
                 const vo = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage
                 if (vo?.message) {
                     let buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino(), reuploadRequest: sock.updateMediaMessage })
-                    const type = Object.keys(vo.message)[0]
-                    if (type === 'imageMessage') await sock.sendMessage(jid, { image: buffer, caption: "*Anti ViewOnce Detected*" })
-                    if (type === 'videoMessage') await sock.sendMessage(jid, { video: buffer, caption: "*Anti ViewOnce Detected*" })
+                    await sock.sendMessage(msg.key.remoteJid, { image: buffer, caption: "*Anti ViewOnce*" })
                 }
             } catch {}
 
-            // FAKE TYPING: 8 SEC WAIT THEN 10 SEC TYPING
-            if (jid !== 'status@broadcast') {
+            if (!msg.key.fromMe && msg.key.remoteJid !== 'status@broadcast') {
+                const jid = msg.key.remoteJid
                 setTimeout(async () => {
                     await sock.sendPresenceUpdate('composing', jid)
-                    const loop = setInterval(() => sock.sendPresenceUpdate('composing', jid).catch(()=>{}), 2500)
-                    setTimeout(async () => {
-                        clearInterval(loop)
-                        await sock.sendPresenceUpdate('paused', jid)
-                    }, TYPING_DURATION)
+                    const loop = setInterval(() => sock.sendPresenceUpdate('composing', jid).catch(()=>{}), 2000)
+                    setTimeout(async () => { clearInterval(loop); await sock.sendPresenceUpdate('paused', jid) }, TYPING_DURATION)
                 }, DELAY_BEFORE_TYPING)
             }
         }
     })
-
-    // ANTI DELETE
-    sock.ev.on('messages.update', async (updates) => {
-        for (const up of updates) {
-            if (up.update.message === null && messageStore.has(up.key.id)) {
-                const old = messageStore.get(up.key.id)
-                const jid = old.key.remoteJid
-                const content = old.message?.conversation || old.message?.extendedTextMessage?.text || "media file was deleted"
-                await sock.sendMessage(jid, { text: `*Anti-Delete* 🚫\nRecovered: ${content}` })
-            }
-        }
-    })
 }
-
 startBot()

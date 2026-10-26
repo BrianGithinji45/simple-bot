@@ -8,45 +8,55 @@ const app = express()
 const PORT = process.env.PORT || 3000
 let latestQR = null
 
-// CONFIG
-const FAKE_TYPING_DELAY = 3000 // fake typing after 3 seconds
-const OWNER_JID = "" // optional: 2547xxxx@s.whatsapp.net
+// CONFIG - YOU CAN EDIT THESE
+const DELAY_BEFORE_TYPING = 8000 // 8 seconds after receiving text
+const TYPING_DURATION = 10000 // show typing for 10 seconds
+const OWNER_JID = "" 
 
 let messageStore = new Map()
 
 app.get("/", async (req, res) => {
     if (!latestQR) {
-        return res.send("<h2>Bot is Online ✅ Always Online Active<br>No QR needed - already paired</h2><p>If you need new QR, delete auth files in Render and redeploy.</p>")
+        return res.send(`<html><body style="background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif"><h1>Bot Online ✅ Always Online Active</h1><p>Anti-Delete | Anti ViewOnce | Fake Typing 8s + 10s</p><p>No QR needed - already linked</p></body></html>`)
     }
-    try {
-        const qrImage = await QRCode.toDataURL(latestQR)
-        res.send(`
-        <html>
-        <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#111;color:white">
-            <h2>Scan This QR - 【entity-WhatsApp¦canonical_name=WhatsApp】 Anti Bot</h2>
-            <p>【entity-WhatsApp¦canonical_name=WhatsApp】 > Linked Devices > Link a Device > Scan</p>
-            <img src="${qrImage}" style="width:300px;border:10px solid white;border-radius:20px"/>
-            <p>QR refreshes automatically. Refresh page for new QR</p>
-            <p>Features: Anti-Delete | Anti ViewOnce | Fake Typing | Always Online</p>
-        </body>
-        </html>
-        `)
-    } catch (e) { res.send("Error generating QR") }
+    const qrImage = await QRCode.toDataURL(latestQR)
+    res.send(`
+    <html><body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#111;color:white">
+        <h2>Scan This QR - WhatsApp Bot</h2>
+        <img src="${qrImage}" style="width:320px;border:10px solid white;border-radius:20px"/>
+        <p>Link: WhatsApp > Linked Devices > Link a Device</p>
+    </body></html>`)
 })
 
-app.listen(PORT, () => console.log(`Server running on ${PORT}`))
+app.listen(PORT, () => console.log(`Server on ${PORT}`))
+
+// KEEP RENDER AWAKE - important for always online
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL
+if (RENDER_URL) {
+    setInterval(() => {
+        fetch(RENDER_URL).then(()=> console.log("Self-ping to stay awake")).catch(()=>{})
+    }, 4 * 60 * 1000) // ping every 4 mins
+}
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys')
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ["Anti Bot", "Chrome", "1.0"],
+        browser: ["Chrome", "Chrome", "121"],
         markOnlineOnConnect: true,
+        syncFullHistory: true,
+        shouldSyncHistoryMessage: () => false
     })
 
-    // ALWAYS ONLINE LOOP
-    setInterval(() => sock.sendPresenceUpdate('available').catch(()=>{}), 15000)
+    // ALWAYS ONLINE - THE REAL FIX
+    const keepOnline = async () => {
+        try {
+            await sock.sendPresenceUpdate('available')
+            // also set it for all chats to make you look online everywhere
+            await sock.sendPresenceUpdate('available')
+        } catch {}
+    }
 
     sock.ev.on('creds.update', saveCreds)
 
@@ -54,52 +64,67 @@ async function startBot() {
         const { connection, lastDisconnect, qr } = update
         if (qr) {
             latestQR = qr
-            console.log("New QR generated - open your Render URL to scan")
+            console.log("New QR - open your Render URL")
         }
         if (connection === 'open') {
             latestQR = null
-            console.log("Paired ✅ Bot Online Always")
+            console.log("Paired ✅")
+            keepOnline()
+            // start 5 second loop ONLY after connection open
+            setInterval(keepOnline, 5000)
         }
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error instanceof Boom) ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut : true
             if (shouldReconnect) startBot()
-            else console.log("Logged out - delete auth_info_baileys and restart")
         }
     })
 
-    // MESSAGES
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
-            if (!msg.message) continue
+            if (!msg.message || msg.key.fromMe) continue
             const jid = msg.key.remoteJid
-            if (!msg.key.fromMe) messageStore.set(msg.key.id, msg)
+            messageStore.set(msg.key.id, msg)
 
             // ANTI VIEW ONCE
             try {
-                const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage || msg.message?.viewOnceMessageV2Extension
+                const viewOnce = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage
                 if (viewOnce?.message) {
                     const inner = viewOnce.message
                     const type = Object.keys(inner)[0]
-                    console.log("ViewOnce caught:", type)
                     let buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino(), reuploadRequest: sock.updateMediaMessage })
                     const target = OWNER_JID || jid
-                    const caption = `*Anti ViewOnce* from @${jid.split('@')[0]}`
-                    if (type === 'imageMessage') await sock.sendMessage(target, { image: buffer, caption })
-                    if (type === 'videoMessage') await sock.sendMessage(target, { video: buffer, caption })
+                    if (type === 'imageMessage') await sock.sendMessage(target, { image: buffer, caption: `*Anti ViewOnce*` })
+                    if (type === 'videoMessage') await sock.sendMessage(target, { video: buffer, caption: `*Anti ViewOnce*` })
                     if (type === 'audioMessage') await sock.sendMessage(target, { audio: buffer, ptt: true })
                 }
-            } catch(e){ console.log("viewonce fail", e.message) }
+            } catch {}
 
-            // FAKE TYPING AFTER SECONDS
-            if (!msg.key.fromMe && jid !== 'status@broadcast') {
-                await sock.sendPresenceUpdate('composing', jid)
-                await new Promise(r => setTimeout(r, FAKE_TYPING_DELAY))
-                await sock.sendPresenceUpdate('paused', jid)
+            // FAKE TYPING LOGIC: 8 sec wait -> typing 10 sec
+            if (jid !== 'status@broadcast') {
+                console.log(`Message received, waiting ${DELAY_BEFORE_TYPING}ms before typing...`)
+                
+                setTimeout(async () => {
+                    try {
+                        console.log("Now showing typing for 10 sec")
+                        await sock.sendPresenceUpdate('composing', jid)
+                        
+                        // Keep sending composing every 3 sec so it doesn't stop
+                        const typingInterval = setInterval(() => {
+                            sock.sendPresenceUpdate('composing', jid).catch(()=>{})
+                        }, 3000)
+
+                        setTimeout(async () => {
+                            clearInterval(typingInterval)
+                            await sock.sendPresenceUpdate('paused', jid)
+                            console.log("Stopped typing")
+                        }, TYPING_DURATION)
+
+                    } catch {}
+                }, DELAY_BEFORE_TYPING)
             }
         }
     })
 
-    // ANTI DELETE
     sock.ev.on('messages.update', async (updates) => {
         for (const update of updates) {
             if (update.update.message === null && messageStore.has(update.key.id)) {
@@ -108,14 +133,13 @@ async function startBot() {
                 const target = OWNER_JID || jid
                 try {
                     let buffer = await downloadMediaMessage(oldMsg, 'buffer', {}, { logger: pino(), reuploadRequest: sock.updateMediaMessage }).catch(()=>null)
-                    const text = `*Anti-Delete* 🚫\nSender deleted message`
-                    if (oldMsg.message?.imageMessage && buffer) await sock.sendMessage(target, { image: buffer, caption: text })
-                    else if (oldMsg.message?.videoMessage && buffer) await sock.sendMessage(target, { video: buffer, caption: text })
+                    if (oldMsg.message?.imageMessage && buffer) await sock.sendMessage(target, { image: buffer, caption: `*Anti-Delete* Recovered Image` })
+                    else if (oldMsg.message?.videoMessage && buffer) await sock.sendMessage(target, { video: buffer, caption: `*Anti-Delete* Recovered Video` })
                     else {
-                        const content = oldMsg.message?.conversation || oldMsg.message?.extendedTextMessage?.text || "Media deleted"
-                        await sock.sendMessage(target, { text: `*Anti-Delete* 🚫\nRecovered: ${content}` }, { mentions: [jid] })
+                        const content = oldMsg.message?.conversation || oldMsg.message?.extendedTextMessage?.text || "media"
+                        await sock.sendMessage(target, { text: `*Anti-Delete* 🚫\nRecovered: ${content}` })
                     }
-                } catch(e){ console.log(e) }
+                } catch {}
             }
         }
     })
